@@ -1,2 +1,4 @@
 tools/
 build/
+src/linux*/
+src/nouveau/

@@ -16,8 +16,10 @@ WORK="$ROOT/build/nouveau-src"
 # 1. найти исходники
 SRC="${1:-}"
 if [ -z "$SRC" ]; then
-  for c in src/linux src/linux-source src/linux-cachyos src/nouveau src/linux-nouveau; do
-    [ -d "$ROOT/$c" ] && SRC="$ROOT/$c" && break
+  # ловим и фиксированные имена, и версионированные (src/linux-7.0.11, src/linux-cachyos-*)
+  for c in "$ROOT"/src/linux* "$ROOT"/src/linux-source "$ROOT"/src/nouveau "$ROOT"/src/linux-nouveau; do
+    [ -d "$c/drivers/gpu/drm/nouveau" ] && SRC="$c" && break
+    [ -d "$c" ] && [ -z "$SRC" ] && SRC="$c"
   done
 fi
 [ -n "$SRC" ] && [ -d "$SRC" ] || { echo "НЕ НАЙДЕН исходник. Укажи путь аргументом."; exit 1; }
