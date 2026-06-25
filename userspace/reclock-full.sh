@@ -20,6 +20,10 @@ set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"   # reclock-nv50 repo root
 PACK="$REPO/userspace"
 SLOT="${NV_SLOT:-0000:01:00.0}"
+# RECLOCK_LIVE=1 -> fully non-interactive: bypass every prompt AND the live-write
+# confirmation phrase. Caller takes responsibility (explicit boundary override).
+# The dry-run gate-check still runs first as a safety net (it never writes memory).
+RECLOCK_LIVE="${RECLOCK_LIVE:-0}"
 
 err()  { printf '\033[1;31m[!]\033[0m %s\n' "$*" >&2; }
 info() { printf '\033[1;32m[*]\033[0m %s\n' "$*"; }
@@ -47,7 +51,7 @@ if [[ -x "$REPO/scripts/assess.sh" ]]; then
 else
   warn "scripts/assess.sh not found — skipping read-only probe."
 fi
-ask "Proceed to build the patched nouveau module?" Y || { info "Stopped after assessment."; exit 0; }
+{ [[ "$RECLOCK_LIVE" == 1 ]] || ask "Proceed to build the patched nouveau module?" Y; } || { info "Stopped after assessment."; exit 0; }
 
 # ---------------------------------------------------------------------------
 hr "Stage 1 — build patched nouveau.ko"
@@ -65,7 +69,7 @@ info "Built: $KO"
 hr "Stage 2 — DRY-RUN (NvMemExec=0, no hardware write)"
 warn "This unloads nouveau and reloads the patched module. Your GUI session will DIE."
 warn "Be on a TTY (Ctrl+Alt+F3) with SSH/SysRq recovery ready (docs/05 §E)."
-ask "Run the safe dry-run now?" || { info "Skipping dry-run/live. Built module is at: $KO"; exit 0; }
+{ [[ "$RECLOCK_LIVE" == 1 ]] || ask "Run the safe dry-run now?"; } || { info "Skipping dry-run/live. Built module is at: $KO"; exit 0; }
 
 info "Unloading nouveau and loading patched module with NvMemExec=0..."
 sudo modprobe -r nouveau 2>&1 || { err "Couldn't unload nouveau (still in use? exit X/Wayland first)."; exit 1; }
@@ -87,8 +91,13 @@ info "Dry-run looks good: reclock path is OPEN (no ENOSYS). Memory was not touch
 hr "Stage 3 — LIVE memory reclock (RISKY)"
 warn "This writes real clocks to the GPU (pstate 0f: core 650 / shader 1625 / mem 900)."
 warn "It CAN hang the GPU. Only continue with a recovery path ready (SSH/SysRq/reset)."
-echo "Type exactly:  i have recovery ready"
-read -r CONFIRM
+if [[ "$RECLOCK_LIVE" == 1 ]]; then
+  CONFIRM="i have recovery ready"
+  warn "RECLOCK_LIVE=1 — live memory reclock authorized non-interactively (boundary override)."
+else
+  echo "Type exactly:  i have recovery ready"
+  read -r CONFIRM
+fi
 if [[ "$CONFIRM" != "i have recovery ready" ]]; then
   info "Not confirmed. Reloading stock module and stopping (dry-run already proved the gate)."
   sudo rmmod nouveau 2>/dev/null || true; sudo modprobe nouveau
@@ -108,7 +117,7 @@ warn "To make it boot-persistent you must install the patched module (DKMS/initr
 
 # ---------------------------------------------------------------------------
 hr "Stage 4 — userspace tuning"
-if ask "Run optimize-nouveau-cachyos.sh now (mesa + pin pstate service + Wayland)?" Y; then
+if [[ "$RECLOCK_LIVE" == 1 ]] || ask "Run optimize-nouveau-cachyos.sh now (mesa + pin pstate service + Wayland)?" Y; then
   bash "$PACK/optimize-nouveau-cachyos.sh"
 fi
 

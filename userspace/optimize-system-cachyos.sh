@@ -20,7 +20,7 @@ set -euo pipefail
 err()  { printf '\033[1;31m[!]\033[0m %s\n' "$*" >&2; }
 info() { printf '\033[1;32m[*]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[~]\033[0m %s\n' "$*"; }
-ask()  { local p="$1" d="${2:-N}" a; read -rp "$p [$([[ $d == Y ]] && echo 'Y/n' || echo 'y/N')] " a; a="${a:-$d}"; [[ "${a,,}" == y ]]; }
+ask()  { local p="$1" d="${2:-N}" a; if [[ -n "${ASSUME_YES:-}" ]]; then a="$d"; printf '\033[1;34m[?]\033[0m %s [auto:%s]\n' "$p" "$a"; else read -rp "$p [$([[ $d == Y ]] && echo 'Y/n' || echo 'y/N')] " a; fi; a="${a:-$d}"; [[ "${a,,}" == y ]]; }
 
 [[ $EUID -eq 0 ]] && { err "Run as a normal user, not root."; exit 1; }
 command -v pacman >/dev/null || { err "Not an Arch-based system."; exit 1; }

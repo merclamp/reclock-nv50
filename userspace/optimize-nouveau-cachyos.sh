@@ -43,7 +43,7 @@ fi
 # --- 1. Remove proprietary-340 obstacles & nouveau blacklist -----------------
 if pacman -Qq nvidia-340xx nvidia-340xx-dkms nvidia-340xx-utils 2>/dev/null | grep -q .; then
   warn "Proprietary nvidia-340xx packages are installed; they conflict with nouveau."
-  read -rp "Remove them now? [y/N] " a
+  if [[ -n "${ASSUME_YES:-}" ]]; then a=y; info "ASSUME_YES: removing conflicting nvidia-340xx."; else read -rp "Remove them now? [y/N] " a; fi
   if [[ "${a,,}" == y ]]; then
     sudo pacman -Rns --noconfirm $(pacman -Qq nvidia-340xx nvidia-340xx-dkms nvidia-340xx-utils 2>/dev/null) || true
   else
@@ -175,7 +175,7 @@ sudo mkinitcpio -P
 
 # --- 7. Optional: also install ventureoo/nouveau-reclocking (nicer CLI) ------
 echo
-read -rp "Also install ventureoo/nouveau-reclocking CLI (Lua helper, optional)? [y/N] " a
+if [[ -n "${ASSUME_YES:-}" ]]; then a=n; info "ASSUME_YES: skipping optional ventureoo CLI."; else read -rp "Also install ventureoo/nouveau-reclocking CLI (Lua helper, optional)? [y/N] " a; fi
 if [[ "${a,,}" == y ]]; then
   sudo pacman -S --needed --noconfirm lua git
   tmp="$(mktemp -d)"

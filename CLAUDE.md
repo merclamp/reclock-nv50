@@ -70,6 +70,7 @@ userspace-обвязка.
 
 | Хочет | Запускать (из `userspace/`) |
 |---|---|
+| Поставить и собрать ВСЁ одной командой (nouveau-путь, без вопросов) | `./установить-всё.sh` (из корня репо) |
 | Поставить проприетарный драйвер (макс OpenGL, X11-only) | `install-cachyos.sh` |
 | nouveau + Wayland + макс перф (нужен патченый модуль) | `reclock-full.sh` → потом `optimize-nouveau-cachyos.sh` |
 | Ускорить саму систему (слабый CPU/8ГБ) | `optimize-system-cachyos.sh` |
