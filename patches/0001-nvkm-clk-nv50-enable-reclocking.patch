@@ -1,0 +1,31 @@
+From: reclock-nv50 project <local>
+Subject: [PATCH] drm/nouveau/clk/nv50: разрешить reclocking (allow_reclock=true)
+
+NV50-семейство регистрирует clk-subdev с allow_reclock=false, из-за чего
+nvkm_clk_ustate_update() возвращает -ENOSYS на любую попытку смены pstate
+(запись в debugfs `pstate` или boot-опцию NvClkMode). В результате карта
+остаётся на boot/POR-клоке и не поднимается до единственного performance
+pstate `0f`, хотя реализация nv50_clk_calc/nv50_ram_calc присутствует.
+
+Родственный gt215 регистрируется с allow_reclock=true (gt215.c). Этот патч
+снимает административный запрет и для nv50, открывая уже существующий путь
+reclocking. Память переключается только при NvMemExec=1 (по умолчанию),
+поэтому безопасную сухую прогонку можно делать с NvMemExec=0.
+
+ВНИМАНИЕ: включает потенциально нестабильный memory-reclock на NV50.
+Тестировать только при наличии способа восстановления (см. docs/05).
+
+Цель: GeForce 9600 GT (G94), pstate 0f = core 650 / shader 1625 / memory 900 МГц.
+---
+ drivers/gpu/drm/nouveau/nvkm/subdev/clk/nv50.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+--- a/drivers/gpu/drm/nouveau/nvkm/subdev/clk/nv50.c
++++ b/drivers/gpu/drm/nouveau/nvkm/subdev/clk/nv50.c
+@@ -559,5 +559,5 @@
+ nv50_clk_new(struct nvkm_device *device, enum nvkm_subdev_type type, int inst,
+ 	     struct nvkm_clk **pclk)
+ {
+-	return nv50_clk_new_(&nv50_clk, device, type, inst, false, pclk);
++	return nv50_clk_new_(&nv50_clk, device, type, inst, true, pclk);
+ }
