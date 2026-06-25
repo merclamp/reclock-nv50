@@ -17,8 +17,8 @@
 # confirmation phrase. Stages 0-2 are safe (read / build / dry-run).
 set -uo pipefail
 
-REPO="$(cd "$(dirname "$0")/../.." && pwd)"   # reclock-nv50 repo root
-PACK="$REPO/userspace/9600gt-pack"
+REPO="$(cd "$(dirname "$0")/.." && pwd)"   # reclock-nv50 repo root
+PACK="$REPO/userspace"
 SLOT="${NV_SLOT:-0000:01:00.0}"
 
 err()  { printf '\033[1;31m[!]\033[0m %s\n' "$*" >&2; }
@@ -28,7 +28,7 @@ hr()   { printf '\n\033[1;36m===== %s =====\033[0m\n' "$*"; }
 ask()  { local p="$1" d="${2:-N}" a; read -rp "$p [$([[ $d == Y ]] && echo 'Y/n' || echo 'y/N')] " a; a="${a:-$d}"; [[ "${a,,}" == y ]]; }
 
 [[ $EUID -eq 0 ]] && { err "Run as a normal user; it sudo's where needed (build must be unprivileged)."; exit 1; }
-[[ -d "$REPO/scripts" && -f "$REPO/scripts/build-nouveau.sh" ]] || { err "Run from inside the reclock-nv50 checkout (userspace/9600gt-pack/)."; exit 1; }
+[[ -d "$REPO/scripts" && -f "$REPO/scripts/build-nouveau.sh" ]] || { err "Run from inside the reclock-nv50 checkout (userspace/)."; exit 1; }
 
 PSTATE_NODE() { find /sys/kernel/debug/dri -name pstate 2>/dev/null | head -1; }
 

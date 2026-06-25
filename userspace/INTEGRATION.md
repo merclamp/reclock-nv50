@@ -24,7 +24,7 @@
    ```
 2. **Userspace (этот пак):** после того как reclock реально работает —
    ```
-   userspace/9600gt-pack/optimize-nouveau-cachyos.sh   # пинит max pstate + mesa + Wayland
+   userspace/optimize-nouveau-cachyos.sh   # пинит max pstate + mesa + Wayland
    ```
 
 ### Либо одной командой — связанный пайплайн
@@ -32,8 +32,8 @@
 `reclock-full.sh` гонит весь путь end-to-end с дисциплиной безопасности из `docs/05`:
 
 ```
-userspace/9600gt-pack/reclock-full.sh        # из TTY, с готовым recovery (SSH/SysRq)
-# опц.: NV_KSRC=/path/to/linux-7.0.11 userspace/9600gt-pack/reclock-full.sh
+userspace/reclock-full.sh        # из TTY, с готовым recovery (SSH/SysRq)
+# опц.: NV_KSRC=/path/to/linux-7.0.11 userspace/reclock-full.sh
 ```
 
 Стадии (каждая за явным «go», в железо не пишет до фразы-подтверждения):
