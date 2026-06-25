@@ -46,6 +46,8 @@ userspace/reclock-full.sh        # из TTY, с готовым recovery (SSH/Sys
 |---|---|---|
 | `nv9600gt.py` | GUI/TUI контрольная панель (stdlib, без зависимостей) | — |
 | `reclock-full.sh` | end-to-end: build → dry-run → live reclock → optimize (gated) | nouveau |
+| `aggressive-tweaks.sh` | выжать всё на полигоне: CPU/RAM/IO/KDE opt-in, GPU-reclock за подтверждением | nouveau |
+| `target-machine.sh` | sourceable guard: предупреждает при запуске не на той машине | — |
 | `optimize-nouveau-cachyos.sh` | mesa-стек + пин max pstate (нужен патченый модуль) + Wayland | nouveau |
 | `optimize-system-cachyos.sh` | системная оптимизация под слабый CPU (i3-2120, 8 ГБ) | любой |
 | `setup-gaming-9600gt.sh` | Wine + WineD3D (OpenGL), DXVK выключен, virtual-desktop | nouveau |
