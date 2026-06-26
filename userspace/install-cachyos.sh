@@ -3,15 +3,19 @@
 #
 # GeForce 9600 GT = G94 (Tesla). Only the NVIDIA 340.xx legacy branch supports it.
 # 340.108 is the final release of that branch — there is nothing newer for this card.
-# On modern kernels (6.x/7.x) it must be built via the community-patched AUR DKMS package.
+# On modern kernels (6.x/7.x) it needs community patches. The plain AUR
+# `nvidia-340xx-dkms` is STALE (340.76, Linux 4.0) and will NOT build, so this script
+# builds the kernel module from the VENDORED, PATCHED package in ../proprietary-340xx
+# (which carries the 7.0/7.1 + clang/LTO fixes) and pulls only -utils from the AUR.
 #
 # This script:
 #   1) verifies a 340-class NVIDIA GPU is present,
 #   2) installs the matching kernel headers for the RUNNING kernel,
-#   3) installs nvidia-340xx-dkms + nvidia-340xx-utils from the AUR via paru,
+#   3) installs nvidia-340xx-utils (340.108) from the AUR, then builds + installs the
+#      patched nvidia-340xx-dkms from ../proprietary-340xx,
 #   4) blacklists nouveau and rebuilds the initramfs.
 #
-# Run as your normal user (NOT root) — paru must build as non-root.
+# Run as your normal user (NOT root) — makepkg/paru must build as non-root.
 set -euo pipefail
 
 err()  { printf '\033[1;31m[!]\033[0m %s\n' "$*" >&2; }
@@ -69,10 +73,33 @@ fi
 info "Installing kernel headers + DKMS prerequisites..."
 sudo pacman -S --needed --noconfirm base-devel dkms "$HDR_PKG"
 
-# --- 3. Install the legacy driver (DKMS) -------------------------------------
-info "Installing nvidia-340xx-dkms + nvidia-340xx-utils from the AUR..."
-info "(This compiles the kernel module against your headers; takes a few minutes.)"
-paru -S --needed nvidia-340xx-dkms nvidia-340xx-utils
+# --- 3. Install the legacy driver --------------------------------------------
+# nvidia-340xx-utils (340.108) is current in the AUR, so take it from there. The
+# kernel module, however, is built from our VENDORED + PATCHED package, NOT from the
+# stale AUR `nvidia-340xx-dkms` (340.76) which cannot build on modern kernels.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PKGDIR="$REPO_ROOT/proprietary-340xx"
+[[ -f "$PKGDIR/PKGBUILD" ]] || { err "Vendored package missing at $PKGDIR"; exit 1; }
+
+# clang/LTO kernels (CachyOS default) need the LLVM toolchain to build the module;
+# the vendored dkms.conf auto-detects this and builds with CC=clang LLVM=1.
+if grep -q '^CONFIG_CC_IS_CLANG=y' "/usr/lib/modules/$KREL/build/.config" 2>/dev/null; then
+  info "Target kernel is clang/LTO-built — installing LLVM toolchain (clang llvm lld)."
+  sudo pacman -S --needed --noconfirm clang llvm lld
+fi
+
+info "Installing nvidia-340xx-utils (340.108) from the AUR..."
+paru -S --needed nvidia-340xx-utils
+
+info "Building patched nvidia-340xx-dkms from $PKGDIR ..."
+info "(Downloads the 340.108 .run, applies patches 0001-0020.)"
+# NOTE: build with --nodeps. The PKGBUILD makedepends list 'linux'/'linux-headers',
+# which a CachyOS kernel does NOT provide as those exact names; 'makepkg -s' would try
+# to pull the STOCK linux kernel. The -dkms package only stages sources (no compile at
+# build time), so skipping makedepends is safe.
+( cd "$PKGDIR" && NVIDIA_340XX_DKMS_ONLY=1 makepkg -f --nodeps )
+info "Installing the package (DKMS then builds the module against your kernel)..."
+sudo pacman -U --noconfirm "$PKGDIR"/nvidia-340xx-dkms-*.pkg.tar.*
 
 # --- 4. Blacklist nouveau & rebuild initramfs --------------------------------
 info "Blacklisting nouveau..."

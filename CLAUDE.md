@@ -5,16 +5,20 @@
 
 ## Что это за проект
 
-`reclock-nv50` — довести **reclocking в nouveau** для **GeForce 9600 GT (G94 / NV50 /
-Tesla)** до полных частот. Драйвер не новый — это **патч к существующему nouveau** +
-userspace-обвязка.
+`reclock-nv50` — заставить **GeForce 9600 GT (G94 / NV50 / Tesla)** работать на
+современной CachyOS. ОСНОВНОЙ путь теперь — **проприетарный NVIDIA 340.108**
+через DKMS. nouveau-reclocking оказался тупиком и убран в архив.
 
-Две половины:
-- **Ядро (корень репо):** `patches/`, `src/nvkm-clk/`, `src/nvkm-fb/`,
-  `scripts/build-nouveau.sh`, `docs/00-07`, `traces/`. Снимают гейт
-  `allow_reclock=false` в `nvkm/subdev/clk/nv50.c` и собирают патченый `nouveau.ko`.
-- **Userspace (`userspace/`):** установка, оптимизация, gaming, восстановление графики,
-  контрольная панель `nv9600gt.py`. См. `userspace/INTEGRATION.md`.
+Структура:
+- **`proprietary-340xx/` (ГЛАВНОЕ):** вендоренный PKGBUILD драйвера 340.108 +
+  патчи `0001-0019` (AUR, до 6.15) **+ наш `0020-kernel-7.0-7.1.patch`** — сборка на
+  ядрах 7.0/7.1 и clang/LTO (CachyOS). См. `proprietary-340xx/README.md`.
+- **Userspace (`userspace/`):** `install-cachyos.sh` (ставит проприетарь из вендор-
+  пакета), `nv-switch.sh` (переключатель nvidia↔nouveau), системный тюнинг, gaming,
+  восстановление графики, панель `nv9600gt.py`.
+- **`nouveau-attic/` (АРХИВ, не трогать без надобности):** весь старый nouveau-reclock
+  (`patches/`, `src/nvkm-*`, `scripts/build-nouveau.sh`, `docs/00-07`, `traces/`,
+  `установить-всё.sh`, nouveau-скрипты). Справочно, не поддерживается.
 
 ## ЦЕЛЕВАЯ МАШИНА (всё заточено ровно под неё — НЕ универсально)
 
@@ -34,20 +38,22 @@ userspace-обвязка.
 
 - **Нет аппаратного Vulkan** на Tesla → только OpenGL. DXVK/VKD3D/gamescope невозможны.
   Поэтому gaming сделан через **WineD3D (OpenGL)**, DXVK ВЫКЛЮЧЕН намеренно — это не баг.
-- Reclocking на NV50 **ручной**; на стоковом `nouveau.ko` запись в pstate = `-ENOSYS`.
-  Реальный прирост (~10%→~80%) только ПОСЛЕ патченого модуля из этого репо.
+- На проприетарном 340.108 частотами управляет сам драйвер — reclocking вручную НЕ нужен.
+  Ручной nouveau-reclock (pstate = `-ENOSYS` на стоке, прирост ~10%→~80%) — в `nouveau-attic/`, архив.
 - Проприетарный 340.108 и nouveau **взаимоисключающи**. 340 = Xorg-only, без Wayland,
   yserver на нём НИКОГДА не заработает.
 
 ## BOUNDARY — что НЕЛЬЗЯ делать без явного «go» пользователя
 
 - **НИКОГДА не писать в железо GPU** (pstate / MMIO / live memory-reclock) без явного
-  согласия И готового плана восстановления (SSH со второй машины / Magic SysRq / reset).
-  См. `docs/05` §D/§E. Live-reclock в `userspace/reclock-full.sh` требует ввода
-  фразы-подтверждения — не обходи это.
-- Безопасны: чтение (`scripts/assess.sh`, `assess-root.sh`), сборка модуля,
-  dry-run `NvMemExec=0` (строит hwsq, в память НЕ пишет).
-- Не коммить `build/`, `src/linux*/`, `src/nouveau/` (они в `.gitignore` — рабочие копии).
+  согласия И плана восстановления (SSH со второй машины / Magic SysRq / reset).
+  Это касается только архивного nouveau-reclock (`nouveau-attic/userspace/reclock-full.sh`
+  требует фразы-подтверждения — не обходи). Проприетарь в железо так не лезет.
+- **Переключение драйвера** — только через `userspace/nv-switch.sh` (он владеет своими
+  modprobe.d-файлами и делает бэкапы). Пересборка initramfs обязательна, живой swap драйвера не делать.
+- Безопасны: сборка модуля (`proprietary-340xx/`, makepkg/dkms), чтение-диагностика.
+- Не коммить build-артефакты: `proprietary-340xx/{src,pkg,*.run,*.pkg.tar.*}`,
+  `nouveau-attic/src/linux*`, `nouveau-attic/src/nouveau/` (всё в `.gitignore`).
 
 ## ЕСЛИ ПОЛЬЗОВАТЕЛЬ ЖАЛУЕТСЯ «KDE не запускает иксы / чёрный экран после логина»
 
@@ -68,16 +74,16 @@ userspace-обвязка.
 
 ## ТИПОВЫЕ СЦЕНАРИИ → какой скрипт
 
-| Хочет | Запускать (из `userspace/`) |
+| Хочет | Запускать |
 |---|---|
-| Поставить и собрать ВСЁ одной командой (nouveau-путь, без вопросов) | `./установить-всё.sh` (из корня репо) |
-| Поставить проприетарный драйвер (макс OpenGL, X11-only) | `install-cachyos.sh` |
-| nouveau + Wayland + макс перф (нужен патченый модуль) | `reclock-full.sh` → потом `optimize-nouveau-cachyos.sh` |
-| Ускорить саму систему (слабый CPU/8ГБ) | `optimize-system-cachyos.sh` |
-| Запускать старые игры (DX9/DX10) | `setup-gaming-9600gt.sh`, потом `wine9600 game.exe` |
-| Сломан вход в графику | `diagnose-display.sh` → `fix-display-cachyos.sh` |
-| Эксперимент с Rust-X11 | `build-yserver.sh` (только на nouveau, может не завестись) |
-| Просто меню «что делать» | `python3 nv9600gt.py` (GUI если есть дисплей, иначе TUI) |
+| Поставить проприетарный 340.108 (ОСНОВНОЙ путь, X11-only) | `userspace/install-cachyos.sh` |
+| Переключиться nvidia ↔ nouveau | `userspace/nv-switch.sh {status\|nvidia\|nouveau}` |
+| Собрать драйвер вручную | `cd proprietary-340xx && NVIDIA_340XX_DKMS_ONLY=1 makepkg -si` |
+| Ускорить систему (слабый CPU/8ГБ) | `userspace/optimize-system-cachyos.sh` |
+| Старые игры (DX9/DX10) | `userspace/setup-gaming-9600gt.sh`, потом `wine9600 game.exe` |
+| Сломан вход в графику | `userspace/diagnose-display.sh` → `userspace/fix-display-cachyos.sh` |
+| Меню «что делать» | `python3 userspace/nv9600gt.py` |
+| Старый nouveau-reclock / yserver | `nouveau-attic/` (архив, справочно) |
 
 ## ПРИНЦИПЫ ПОЛЬЗОВАТЕЛЯ (учитывай)
 
@@ -88,5 +94,6 @@ userspace-обвязка.
 ## ПЕРЕД ИЗМЕНЕНИЯМИ
 
 - Все shell-скрипты обязаны проходить `bash -n`; Python — парситься.
-- Не дублируй reclock-логику ядра в userspace — ссылайся на корневые `scripts/`/`docs/`.
+- Патч драйвера под новое ядро — в `proprietary-340xx/00NN-kernel-*.patch`; проверяй сборку
+  против реальных заголовков ядра (clang — `CC=clang LLVM=1`), не на глазок.
 - Если действие пишет в железо или может уронить графику — СНАЧАЛА предупреди и получи «go».

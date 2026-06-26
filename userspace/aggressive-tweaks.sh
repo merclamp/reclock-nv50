@@ -10,7 +10,7 @@
 # Usage:
 #   ./aggressive-tweaks.sh --cpu --io --kde --zram        # safe-aggressive set
 #   ./aggressive-tweaks.sh --all-safe                     # all of the above
-#   ./aggressive-tweaks.sh --gpu-reclock                  # RISKY: hands off to reclock-full.sh §D
+#   ./aggressive-tweaks.sh --gpu-reclock                  # RISKY: hands off to nouveau-attic/userspace/reclock-full.sh §D
 #   ./aggressive-tweaks.sh --help
 #
 # Reverts: every changed file gets a .bak-<timestamp>; kernel cmdline tweaks are
@@ -136,13 +136,14 @@ HARD FACTS from this project's own recon (docs/03), so we don't chase impossible
     ENOMEM second front (docs/07) = near-certain freeze. That's vandalism, not tuning.
   * Even the stock 0f memory step is the risky part and must be tested live with recovery.
 NOTE
-  if [[ -x "$HERE/reclock-full.sh" ]]; then
-    warn "Handing off to reclock-full.sh — it gates the live HW write behind a confirmation"
+  RECLOCK="$HERE/../nouveau-attic/userspace/reclock-full.sh"
+  if [[ -x "$RECLOCK" ]]; then
+    warn "Handing off to nouveau-attic/userspace/reclock-full.sh (archived; gates the live HW write)"
     warn "phrase and expects SSH/SysRq recovery ready (docs/05 §D/E)."
-    read -rp "Launch reclock-full.sh now? [y/N] " a
-    [[ "${a,,}" == y ]] && exec bash "$HERE/reclock-full.sh"
+    read -rp "Launch the archived reclock-full.sh now? [y/N] " a
+    [[ "${a,,}" == y ]] && exec bash "$RECLOCK"
   else
-    err "reclock-full.sh not found next to this script."
+    err "reclock-full.sh not found (expected in nouveau-attic/userspace/)."
   fi
 fi
 

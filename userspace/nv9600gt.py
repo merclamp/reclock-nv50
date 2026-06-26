@@ -12,10 +12,10 @@ Pure Python standard library — nothing to pip install.
 
 Actions:
   1. Install proprietary 340.108 (DKMS, Xorg-only)   -> install-cachyos.sh
-  2. Optimize nouveau + Wayland (reclocking)         -> optimize-nouveau-cachyos.sh
+  2. Switch driver: nvidia <-> nouveau               -> nv-switch.sh
   3. System optimization (weak rig)                  -> optimize-system-cachyos.sh
   4. Gaming setup (WineD3D, no DXVK)                 -> setup-gaming-9600gt.sh
-  5. Build yserver (experimental X11 in Rust)        -> build-yserver.sh
+  5. [archived] nouveau reclocking / yserver         -> nouveau-attic/userspace/
   6. Download 340.108 .run only (no install)         -> direct NVIDIA download
   7. Show GPU / driver status
 
@@ -49,10 +49,12 @@ NV_340_URLS = [
 
 SCRIPTS = {
     "install_proprietary": "install-cachyos.sh",
-    "optimize_nouveau": "optimize-nouveau-cachyos.sh",
+    "switch": "nv-switch.sh",
     "optimize_system": "optimize-system-cachyos.sh",
     "gaming": "setup-gaming-9600gt.sh",
-    "yserver": "build-yserver.sh",
+    # nouveau path is archived (kept for reference only)
+    "optimize_nouveau": "../nouveau-attic/userspace/optimize-nouveau-cachyos.sh",
+    "yserver": "../nouveau-attic/userspace/build-yserver.sh",
 }
 
 
@@ -163,10 +165,11 @@ def download_runfile(dest_dir: Path, progress=None) -> Path | None:
 # ---------------------------------------------------------------------------
 MENU = [
     ("Install proprietary 340.108 (DKMS, Xorg-only)", "install_proprietary"),
-    ("Optimize nouveau + Wayland (reclocking)", "optimize_nouveau"),
+    ("Switch driver: nvidia <-> nouveau", "switch"),
     ("System optimization (weak rig: i3-2120 + 8GB)", "optimize_system"),
     ("Gaming setup (WineD3D, DXVK disabled)", "gaming"),
-    ("Build yserver (experimental Rust X11)", "yserver"),
+    ("[archived] Optimize nouveau + Wayland (reclocking)", "optimize_nouveau"),
+    ("[archived] Build yserver (experimental Rust X11)", "yserver"),
     ("Download 340.108 .run only (no install)", "download"),
     ("Show GPU / driver status", "status"),
     ("Quit", "quit"),
@@ -256,13 +259,16 @@ def run_gui() -> int:
     buttons = [
         ("Install proprietary 340.108 (Xorg-only)", lambda: do_script(
             "install_proprietary",
-            "Proprietary 340 is Xorg-ONLY and conflicts with nouveau/Wayland/yserver.\nContinue?")),
-        ("Optimize nouveau + Wayland (reclocking)", lambda: do_script("optimize_nouveau")),
+            "Proprietary 340 is Xorg-ONLY and conflicts with nouveau/Wayland.\nContinue?")),
+        ("Switch driver: nvidia <-> nouveau", lambda: do_script(
+            "switch",
+            "Flip the boot driver between proprietary 340 and nouveau (reboot after).\nContinue?")),
         ("System optimization (weak rig)", lambda: do_script("optimize_system")),
         ("Gaming setup (WineD3D, no DXVK)", lambda: do_script("gaming")),
-        ("Build yserver (experimental Rust X11)", lambda: do_script(
+        ("[archived] Optimize nouveau + Wayland", lambda: do_script("optimize_nouveau")),
+        ("[archived] Build yserver (Rust X11)", lambda: do_script(
             "yserver",
-            "yserver is EXPERIMENTAL and needs nouveau (NEVER works on proprietary 340).\nBuild it?")),
+            "ARCHIVED + EXPERIMENTAL; needs nouveau (NEVER works on proprietary 340).\nBuild it?")),
         ("Download 340.108 .run only", do_download),
         ("Show GPU / driver status", do_status),
     ]

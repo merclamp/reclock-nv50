@@ -1,0 +1,160 @@
+Subject: [PATCH] 340.108: build on Linux 7.0 & 7.1 (and 6.16+) + clang/LTO
+
+Verified building against BOTH a 7.0 gcc kernel (7.0.13-zen) and 7.1 clang/ThinLTO
+kernels (7.1.0-cachyos), and DKMS-installed on the real target (7.1-rc6 clang).
+7.0 and 7.1 need identical deltas, so this single conditional patch covers both.
+
+Fixes (cumulative on 0001-0019):
+1. conftest.sh (kernel+uvm): add -fms-extensions. linux/fs.h now uses an anonymous
+   tagged struct member; without the flag sizeof(struct filename) is wrong and the
+   `static_assert(... % 64 == 0)` fails inside EVERY conftest that includes fs.h
+   (surfaces as bogus vmap/acpi/pci_dma "conftest failed!").
+2. os-interface.c: in_irq() -> in_hardirq() (in_irq removed).
+3. screen_info: x86 boot global removed + not exported; new `screen_info` conftest
+   gates NV_SCREEN_INFO_GLOBAL_PRESENT, users fall back to "no boot fb info".
+4. dkms.conf (+uvm fragment): build with SYSSRC=/usr/lib/modules/$kernelver/build
+   (NOT KERNEL_UNAME, which makes kbuild run syncconfig against the shared headers
+   tree and break it) and auto-detect clang kernels (CONFIG_CC_IS_CLANG) to build
+   with CC=clang LD=ld.lld LLVM=1 (else gcc dies on -mstack-alignment=8). SYSSRC
+   also skips the gcc-only cc_version_check that fails on clang kernels.
+
+--- a/kernel/conftest.sh	2026-06-26 01:32:02.309683983 +0300
++++ b/kernel/conftest.sh	2026-06-26 01:30:40.087357991 +0300
+@@ -196,7 +196,7 @@
+ }
+ 
+ build_cflags() {
+-    BASE_CFLAGS="-I${SCRIPTDIR} -std=gnu17 -O2 -Wno-implicit-function-declaration -Wno-incompatible-pointer-types -D__KERNEL__ \
++    BASE_CFLAGS="-I${SCRIPTDIR} -std=gnu17 -fms-extensions -O2 -Wno-implicit-function-declaration -Wno-incompatible-pointer-types -D__KERNEL__ \
+ -DKBUILD_BASENAME=\"#conftest$$\" -DKBUILD_MODNAME=\"#conftest$$\" \
+ -nostdinc -isystem $ISYSTEM"
+ 
+@@ -572,6 +572,23 @@
+             compile_check_conftest "$CODE" "NV_REMAP_PFN_RANGE_PRESENT" "" "functions"
+         ;;
+ 
++        screen_info)
++            #
++            # Determine if the global 'screen_info' symbol is available.
++            # The x86 boot screen_info global was removed from generic kernel
++            # code in favour of the sysfb screen_info accessors (Linux ~6.15+),
++            # and is not exported to modules. Out-of-tree modules can therefore
++            # no longer reference it. When absent, the driver falls back to
++            # "no EFI/VESA boot framebuffer info".
++            #
++            CODE="
++            #include <linux/screen_info.h>
++            struct screen_info *conftest_screen_info(void) {
++                return &screen_info;
++            }"
++            compile_check_conftest "$CODE" "NV_SCREEN_INFO_GLOBAL_PRESENT" "" "generic"
++        ;;
++
+         vmap)
+             #
+             # Determine if the vmap() function is present and how
+--- a/kernel/Makefile	2026-06-26 01:32:02.309759973 +0300
++++ b/kernel/Makefile	2026-06-26 01:31:03.634387397 +0300
+@@ -92,6 +92,7 @@
+ COMPILE_TESTS = \
+ 	remap_pfn_range \
+ 	vmap \
++	screen_info \
+ 	set_pages_uc \
+ 	set_memory_uc \
+ 	set_memory_array_uc \
+--- a/kernel/os-interface.c	2026-06-26 01:32:02.192361463 +0300
++++ b/kernel/os-interface.c	2026-06-26 01:30:22.131663999 +0300
+@@ -219,7 +219,7 @@
+ 
+ BOOL NV_API_CALL os_is_isr(void)
+ {
+-    return (in_irq());
++    return (in_hardirq());
+ }
+ 
+ // return TRUE if the caller is the super-user
+@@ -479,7 +479,7 @@
+     nv_gettimeofday(&tm1);
+ #endif
+ 
+-    if (in_irq() && (MicroSeconds > NV_MAX_ISR_DELAY_US))
++    if (in_hardirq() && (MicroSeconds > NV_MAX_ISR_DELAY_US))
+         return RM_ERROR;
+     
+     mdelay_safe_msec = MicroSeconds / 1000;
+@@ -524,7 +524,7 @@
+     tm_start = tm_aux;
+ #endif
+ 
+-    if (in_irq() && (MilliSeconds > NV_MAX_ISR_DELAY_MS))
++    if (in_hardirq() && (MilliSeconds > NV_MAX_ISR_DELAY_MS))
+         return RM_ERROR;
+ 
+     if (!NV_MAY_SLEEP()) 
+@@ -1149,7 +1149,8 @@
+     NvU32 *pPitch
+ )
+ {
+-#if !defined(NV_VMWARE) && (defined(NVCPU_X86) || defined(NVCPU_X86_64))
++#if !defined(NV_VMWARE) && (defined(NVCPU_X86) || defined(NVCPU_X86_64)) && \
++    defined(NV_SCREEN_INFO_GLOBAL_PRESENT)
+     if (NV_EFI_ENABLED())
+     {
+         *pPhysicalAddress = screen_info.lfb_base;
+--- a/kernel/nv.c	2026-06-26 01:32:02.309835693 +0300
++++ b/kernel/nv.c	2026-06-26 01:30:22.131769529 +0300
+@@ -1454,7 +1454,8 @@
+         }
+ #endif
+ #if !defined(NV_VMWARE) && \
+-  (defined(NVCPU_X86) || defined(NVCPU_X86_64))
++  (defined(NVCPU_X86) || defined(NVCPU_X86_64)) && \
++  defined(NV_SCREEN_INFO_GLOBAL_PRESENT)
+         if (nv->primary_vga && (screen_info.orig_video_isVGA != 0x01))
+         {
+             if (!nv_fbdev_failure_detected)
+--- a/kernel/uvm/conftest.sh	2026-06-26 01:32:02.300785201 +0300
++++ b/kernel/uvm/conftest.sh	2026-06-26 01:31:03.634311207 +0300
+@@ -196,7 +196,7 @@
+ }
+ 
+ build_cflags() {
+-    BASE_CFLAGS="-std=gnu17 -O2 -Wno-implicit-function-declaration -Wno-incompatible-pointer-types -D__KERNEL__ \
++    BASE_CFLAGS="-std=gnu17 -fms-extensions -O2 -Wno-implicit-function-declaration -Wno-incompatible-pointer-types -D__KERNEL__ \
+ -DKBUILD_BASENAME=\"#conftest$$\" -DKBUILD_MODNAME=\"#conftest$$\" \
+ -nostdinc -isystem $ISYSTEM"
+ 
+--- a/kernel/dkms.conf	2026-06-26 01:32:02.146740966 +0300
++++ b/kernel/dkms.conf	2026-06-26 02:19:20.376257207 +0300
+@@ -4,10 +4,20 @@
+   num_cpu_cores=1
+ fi
+ 
++# Detect a clang/LLVM-built target kernel (CachyOS and other -clang/-lto kernels).
++# Such kernels embed clang-only CFLAGS (e.g. -mstack-alignment=8), so building the
++# module with gcc fails with "unrecognized command-line option". When the running
++# kernel was built with clang we must build with the matching LLVM toolchain.
++_nv_llvm=""
++_nv_kcfg="/usr/lib/modules/${kernelver}/build/.config"
++if [ -f "$_nv_kcfg" ] && grep -q '^CONFIG_CC_IS_CLANG=y' "$_nv_kcfg"; then
++  _nv_llvm="CC=clang HOST_CC=clang LD=ld.lld LLVM=1"
++fi
++
+ PACKAGE_NAME="nvidia"
+ PACKAGE_VERSION="340.108"
+ BUILT_MODULE_NAME[0]="$PACKAGE_NAME"
+ DEST_MODULE_LOCATION[0]="/kernel/drivers/video"
+-MAKE[0]="make -j$num_cpu_cores module KERNEL_UNAME=${kernelver}"
++MAKE[0]="make -j$num_cpu_cores module SYSSRC=/usr/lib/modules/${kernelver}/build $_nv_llvm"
+ CLEAN="make clean"
+ AUTOINSTALL="yes"
+--- a/kernel/uvm/dkms.conf.fragment	2019-12-12 01:04:24.000000000 +0300
++++ b/kernel/uvm/dkms.conf.fragment	2026-06-26 02:19:20.376338157 +0300
+@@ -1,5 +1,5 @@
+ BUILT_MODULE_NAME[1]="${PACKAGE_NAME}-uvm"
+ BUILT_MODULE_LOCATION[1]="uvm/"
+ DEST_MODULE_LOCATION[1]="/kernel/drivers/video"
+-MAKE[0]+="; make -C uvm module KERNEL_UNAME=${kernelver} KBUILD_EXTMOD=${dkms_tree}/${PACKAGE_NAME}/${PACKAGE_VERSION}/build/uvm"
++MAKE[0]+="; make -C uvm module SYSSRC=/usr/lib/modules/${kernelver}/build $_nv_llvm KBUILD_EXTMOD=${dkms_tree}/${PACKAGE_NAME}/${PACKAGE_VERSION}/build/uvm"
+ CLEAN+="; make -C uvm clean"

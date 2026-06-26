@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""
+steam-340-fix — make Steam games run on a legacy NVIDIA 340.xx (pre-glvnd) GPU.
+
+The problem
+-----------
+Steam runs games inside the pressure-vessel container (Steam Linux Runtime).
+The 340.xx driver predates glvnd, so the container cannot see a
+`libGLX_nvidia.so` and silently falls back to Mesa's `llvmpipe` software
+renderer => ~1 FPS. The GPU sits idle.
+
+The fix (per game, in the launch options)
+-----------------------------------------
+    PROTON_USE_WINED3D=1 STEAM_RUNTIME=0 %command%
+
+  * STEAM_RUNTIME=0   -> stops the scout LD overrides that force Mesa, so the
+                        container uses the HOST nvidia GL
+                        (/run/host/.../nvidia/libGL.so.340.108) = hardware.
+  * PROTON_USE_WINED3D=1 -> for Windows/Proton games: forces the Direct3D->
+                        OpenGL path. The Tesla chip has NO Vulkan, so DXVK/
+                        VKD3D cannot run; WineD3D (OpenGL) is the only option.
+                        (Ignored harmlessly by native Linux games.)
+
+This script writes that launch option onto every installed *game* (skipping the
+Steam Linux Runtime / Proton tool apps) and sets a default Steam Play compat
+tool so new Windows games inherit a working configuration.
+
+IMPORTANT runtime caveat
+------------------------
+Pick a Proton whose required Steam Linux Runtime is actually installed AND that
+Steam will not keep "re-validating" into a broken state. As of mid-2026
+`proton-cachyos`, `Proton Experimental` and even `GE-Proton11` declare a
+dependency on **SLR 4.0** (appid 4183110, "steamrt4"), which Steam refuses to
+download here ("Invalid platform") and repeatedly corrupts to "unsupported
+version 0" even when the files are copied in by hand.
+
+The one runtime that stays healthy is **sniper** (SLR 3.0, appid 1628350).
+**Proton 9.0** uses it out of the box. To get a modern Wine (11.x) on it, install
+GE-Proton11 into `~/.steam/root/compatibilitytools.d/` and repoint its runtime:
+
+    sed -i 's/"require_tool_appid" *"4183110"/"require_tool_appid" "1628350"/' \
+        ~/.steam/root/compatibilitytools.d/GE-Proton11-1/toolmanifest.vdf
+
+That gives Wine 11 (best WineD3D + multithreaded command stream + fsync) on the
+stable sniper runtime — modern *and* it actually launches. Default below =
+GE-Proton11-1 (fall back to proton_9 if GE is not installed).
+
+Run with Steam SHUT DOWN (`steam -shutdown`) — it rewrites these files on exit.
+Usage:  steam-340-fix [compat_tool_name]   # default: GE-Proton11-1
+"""
+import os, glob, re, sys, shutil
+
+HOME = os.path.expanduser("~")
+STEAM = os.path.join(HOME, ".local/share/Steam")
+# __GL_SHADER_DISK_CACHE=1 = persistent nvidia shader cache -> kills WineD3D
+# first-encounter compile stutter (the main source of in-game freezes).
+OPT = ("PROTON_USE_WINED3D=1 __GL_SHADER_DISK_CACHE=1 "
+       "__GL_SHADER_DISK_CACHE_SIZE=1000000000 STEAM_RUNTIME=0 %command%")
+DEFAULT_TOOL = sys.argv[1] if len(sys.argv) > 1 else "GE-Proton11-1"
+EXCLUDE = re.compile(r"Steam Linux Runtime|Proton|Steamworks Common|Redist", re.I)
+
+
+def read(p):
+    return open(p, encoding="utf-8", errors="surrogateescape").read()
+
+
+def write(p, s):
+    open(p, "w", encoding="utf-8", errors="surrogateescape").write(s)
+
+
+def installed_games():
+    games = {}
+    for pat in (
+        STEAM + "/steamapps/appmanifest_*.acf",
+        STEAM + "/steamapps/*/steamapps/appmanifest_*.acf",
+    ):
+        for f in glob.glob(pat):
+            t = read(f)
+            m = re.search(r'"appid"\s*"(\d+)"', t)
+            n = re.search(r'"name"\s*"([^"]*)"', t)
+            if not m:
+                continue
+            nm = n.group(1) if n else ""
+            if EXCLUDE.search(nm):
+                continue
+            games[m.group(1)] = nm
+    return games
+
+
+def find_block(lines, header, start=0, end=None):
+    """(open_brace_idx, close_brace_idx) of the block whose key == header."""
+    if end is None:
+        end = len(lines)
+    for i in range(start, end):
+        if lines[i].strip() == header:
+            j = i + 1
+            while j < len(lines) and lines[j].strip() == "":
+                j += 1
+            if j < len(lines) and lines[j].strip() == "{":
+                depth = 0
+                for k in range(j, len(lines)):
+                    depth += lines[k].count("{") - lines[k].count("}")
+                    if depth == 0:
+                        return (j, k)
+    return None
+
+
+def set_launch_options():
+    lcs = glob.glob(STEAM + "/userdata/*/config/localconfig.vdf")
+    if not lcs:
+        print("!! no localconfig.vdf"); return
+    lc = lcs[0]
+    shutil.copy(lc, lc + ".bak340")
+    games = installed_games()
+    print("games:", games)
+    for aid in games:
+        lines = read(lc).split("\n")
+        ab = find_block(lines, '"apps"')
+        if not ab:
+            print("!! no apps block"); return
+        astart, aend = ab
+        ai = re.match(r"\s*", lines[astart]).group(0) + "\t"
+        fi = ai + "\t"
+        blk = find_block(lines, '"%s"' % aid, astart + 1, aend)
+        if blk:
+            bj, bk = blk
+            done = False
+            for m in range(bj + 1, bk):
+                if '"LaunchOptions"' in lines[m]:
+                    lines[m] = re.sub(r'("LaunchOptions"\s+)".*"',
+                                      lambda x: x.group(1) + '"' + OPT + '"', lines[m])
+                    done = True; print("  %s: updated" % aid); break
+            if not done:
+                lines.insert(bj + 1, fi + '"LaunchOptions"\t\t"' + OPT + '"')
+                print("  %s: added field" % aid)
+        else:
+            for off, bl in enumerate([ai + '"%s"' % aid, ai + "{",
+                                      fi + '"LaunchOptions"\t\t"' + OPT + '"', ai + "}"]):
+                lines.insert(astart + 1 + off, bl)
+            print("  %s: inserted block" % aid)
+        write(lc, "\n".join(lines))
+
+
+def set_default_compat_tool():
+    cfg = STEAM + "/config/config.vdf"
+    if not os.path.exists(cfg):
+        print("!! no config.vdf"); return
+    shutil.copy(cfg, cfg + ".bak340")
+    lines = read(cfg).split("\n")
+    ctm = find_block(lines, '"CompatToolMapping"')
+    if not ctm:
+        print("!! no CompatToolMapping (open Steam->Settings->Compatibility once)"); return
+    cj, ck = ctm
+    ind = re.match(r"\s*", lines[cj]).group(0) + "\t"
+    fi = ind + "\t"
+    b0 = find_block(lines, '"0"', cj + 1, ck)
+    if b0:
+        for m in range(b0[0], b0[1] + 1):
+            lines[m] = re.sub(r'("name"\s+)".*"', r'\1"%s"' % DEFAULT_TOOL, lines[m])
+        print("default compat tool -> %s (updated)" % DEFAULT_TOOL)
+    else:
+        blk = [ind + '"0"', ind + "{", fi + '"name"\t\t"%s"' % DEFAULT_TOOL,
+               fi + '"config"\t\t""', fi + '"priority"\t\t"250"', ind + "}"]
+        for off, bl in enumerate(blk):
+            lines.insert(cj + 1 + off, bl)
+        print("default compat tool -> %s (inserted)" % DEFAULT_TOOL)
+    write(cfg, "\n".join(lines))
+
+
+if __name__ == "__main__":
+    set_launch_options()
+    set_default_compat_tool()
+    print("done. Start Steam and launch a game.")

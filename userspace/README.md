@@ -6,9 +6,10 @@
 - **Единственная драйверная ветка:** NVIDIA **340.xx legacy**, последний релиз — **340.108**
   (вышел 23.12.2019, дальше EOL). Это потолок от NVIDIA — ничего новее для этой карты
   не существует и не появится.
-- На современных ядрах (6.x/7.x) ванильный 340.108 **не собирается** — нужен community-патч.
-- На CachyOS правильный путь: **AUR-пакет `nvidia-340xx-dkms`** (DKMS = автопересборка
-  при смене ядра). Пакет живой, патчится под ядра вплоть до 7.x (обновлён 2025-08-03).
+- На современных ядрах (7.0/7.1, clang/LTO) 340.108 **не собирается** без патчей.
+- Голый AUR `nvidia-340xx-dkms` — **протухший 340.76 (Linux 4.0)**, НЕ собирается. Живой
+  `nvidia-340xx` (340.108-39) патчит только до 6.15. Поэтому мы вендорим драйвер в
+  `../proprietary-340xx/` (PKGBUILD + патчи 0001-0019 **+ наш `0020-kernel-7.0-7.1.patch`**).
 
 ## Установка (одной командой)
 
@@ -22,7 +23,7 @@ sudo reboot
 1. находит видеокарту и проверяет, что это 340-класс (G94/9600 GT),
 2. определяет пакет **headers под запущенное ядро** (`linux-cachyos-headers`,
    `linux-cachyos-rc-headers`, `linux-zen-headers` и т.д. — у CachyOS их несколько),
-3. ставит `nvidia-340xx-dkms` + `nvidia-340xx-utils` через `paru`,
+3. ставит `nvidia-340xx-utils` (AUR) + собирает патченый `nvidia-340xx-dkms` из `../proprietary-340xx/`,
 4. блэклистит nouveau и пересобирает initramfs,
 5. проверяет, что DKMS-модуль реально собрался.
 
@@ -35,8 +36,12 @@ sudo reboot
 # headers строго под текущее ядро (пример для cachyos; проверь: uname -r)
 sudo pacman -S --needed base-devel dkms linux-cachyos-headers
 
-# сам драйвер из AUR (DKMS-вариант — обязателен на CachyOS из-за частых апдейтов ядра)
-paru -S nvidia-340xx-dkms nvidia-340xx-utils
+# utils — из AUR (он свежий, 340.108); модуль — из нашего вендор-пакета
+paru -S --needed nvidia-340xx-utils
+# clang-ядро (CachyOS)? добавь: sudo pacman -S --needed clang llvm lld
+cd ../proprietary-340xx
+NVIDIA_340XX_DKMS_ONLY=1 makepkg -f --nodeps      # --nodeps: PKGBUILD makedepends тянут стоковый linux
+sudo pacman -U --noconfirm nvidia-340xx-dkms-*.pkg.tar.*
 
 # отключить nouveau
 printf 'blacklist nouveau\noptions nouveau modeset=0\n' | sudo tee /etc/modprobe.d/blacklist-nouveau.conf
@@ -57,6 +62,26 @@ glxinfo | grep "OpenGL renderer"    # пакет mesa-utils; должен пок
 dkms status                         # nvidia ... installed
 ```
 
+## Steam-игры (железный рендер, а не 1 FPS)
+
+Steam гоняет игры в контейнере pressure-vessel, а драйвер 340 — до-glvnd, поэтому
+контейнер не видит nvidia-GL и сваливается в софтовый Mesa/llvmpipe → **1 FPS**.
+Лечится так (см. `STEAM-GAMING.md` — там полная история и ловушка SLR 4.0):
+
+```bash
+./setup-steam-340.sh                 # host-GL + 32-битные либы + helper + env
+# поставить GE-Proton11 в ~/.steam/root/compatibilitytools.d/ и пересадить на sniper
+# (SLR 4.0 у Steam битый — "invalid platform"/"version 0"):
+sed -i 's/"require_tool_appid" *"4183110"/"require_tool_appid" "1628350"/' \
+  ~/.steam/root/compatibilitytools.d/GE-Proton11-1/toolmanifest.vdf
+steam -shutdown && steam-340-fix GE-Proton11-1
+```
+
+Универсальная launch-опция (helper проставляет её всем играм):
+`PROTON_USE_WINED3D=1 __GL_SHADER_DISK_CACHE=1 STEAM_RUNTIME=0 %command%`.
+Потолок железа: **нет Vulkan** (DXVK/VKD3D/gamescope невозможны, только WineD3D/OpenGL)
+и **512 МБ VRAM** (на высоких текстурах всё равно подлагивает — снижай детализацию).
+
 ## Важно именно для CachyOS / KDE Plasma
 
 - **Только Xorg (X11), не Wayland.** Драйвер 340.xx древний и под Wayland фактически
@@ -65,9 +90,9 @@ dkms status                         # nvidia ... installed
   модуль через MOK.
 - При смене/обновлении ядра проверь, что стоит соответствующий `*-headers` — DKMS тогда
   пересоберёт модуль сам.
-- Запасной вариант, если что-то пошло не так: **nouveau** (open-source, уже в ядре).
-  Удали `/etc/modprobe.d/blacklist-nouveau.conf`, сделай `sudo mkinitcpio -P`, ребут —
-  картинка вернётся через nouveau (медленнее в 3D, но работает везде и умеет Wayland).
+- Запасной вариант — **nouveau** (open-source, уже в ядре). Проще всего:
+  `./nv-switch.sh nouveau && sudo reboot` (обратно — `./nv-switch.sh nvidia`). nouveau медленнее в 3D,
+  но работает везде и умеет Wayland.
 
 ## Существующие проекты на GitHub (research — изобретать своё не нужно)
 
@@ -76,15 +101,17 @@ dkms status                         # nvidia ... installed
 
 | Проект | Что даёт | Статус |
 |---|---|---|
-| **AUR `nvidia-340xx-dkms` / `nvidia-340xx`** (maint. JerryXiao) | Готовый пакет для Arch/CachyOS, патчи под ядра до 7.x | ✅ Живой (2025-08-03) — **наш выбор** |
+| **AUR `nvidia-340xx`** (maint. JerryXiao) | База 340.108-39, патчи до ядра 6.15 | ✅ Живой — **основа нашего вендор-пакета + 0020** |
+| ~~AUR `nvidia-340xx-dkms`~~ (maint. Anish Bhatt) | Протух на 340.76 / Linux 4.0 | ❌ НЕ собирается |
 | **dkosmari/nvidia-340.108-updated** | Скрипты+патчи сборки 340.108 под Linux 6.0+ | ✅ Живой |
 | **kda2210/nvidia-340-ubuntu-24.04** | DKMS 340.108 под Ubuntu 24.04 + ядро 6.11 | ✅ Живой (для Ubuntu) |
 | **steamos-community/pkg-...-legacy-340xx** | .deb-пакеты ветки 340xx | ✅ Поддерживается |
 | **MeowIce/nvidia-legacy** | Патченные .run под ядра 5.8–6.8 | ⚠️ Архив (18.09.2025, max 6.8) |
 | **Frogging-Family / If-Not-True-Then-False** | Исходные патчи, на которые опираются остальные | ✅ Источник патчей |
 
-**Вывод:** для CachyOS отдельный проект делать незачем — AUR `nvidia-340xx-dkms` уже
-является «most up-to-date driver» для 9600 GT. Новее 340.108 для этой карты не бывает.
+**Вывод:** берём живую базу AUR `nvidia-340xx` (340.108-39) и докладываем
+`0020-kernel-7.0-7.1.patch` под ядра 7.0/7.1 + clang/LTO. Голый `nvidia-340xx-dkms`
+(Anish Bhatt) застрял на 340.76 и не годится. Новее 340.108 для этой карты не бывает.
 
 ## Типичные грабли
 

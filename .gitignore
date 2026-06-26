@@ -2,5 +2,15 @@ tools/
 build/
 # рабочие копии исходников ядра/nouveau — без слеша, чтобы ловить и каталоги,
 # и симлинк src/linux -> src/linux-7.0.11 (он машинно-локальный, не для трекинга)
-src/linux*
-src/nouveau/
+nouveau-attic/src/linux*
+nouveau-attic/src/nouveau/
+
+# proprietary-340xx: makepkg build artifacts (driver .run, built pkgs, work dirs)
+proprietary-340xx/src/
+proprietary-340xx/pkg/
+proprietary-340xx/*.run
+proprietary-340xx/*.pkg.tar.*
+
+# python bytecode
+__pycache__/
+*.pyc

@@ -12,7 +12,8 @@
 #   => This script forces WineD3D (Direct3D -> OpenGL, hardware-accelerated by nouveau)
 #      and explicitly DISABLES DXVK so Wine never tries the dead Vulkan path.
 #
-# Prerequisite: run optimize-nouveau-cachyos.sh first (open Mesa stack + pinned pstate).
+# Prerequisite: a working GL driver. On the proprietary 340 path nothing else is
+# needed; on nouveau, pin the pstate first (nouveau-attic/userspace/optimize-nouveau-cachyos.sh).
 set -euo pipefail
 
 err()  { printf '\033[1;31m[!]\033[0m %s\n' "$*" >&2; }
@@ -123,7 +124,7 @@ Verify the GPU is actually doing the work (not llvmpipe/CPU):
 
 Tips for this rig (9600 GT + i3-2120/2130 Sandy Bridge, 2c/4t):
   * Old DX9/DX10 games only: WineD3D -> OpenGL is the fast, correct path here.
-  * Run optimize-nouveau-cachyos.sh FIRST so the GPU pstate is pinned to max,
+  * On nouveau, run nouveau-attic/userspace/optimize-nouveau-cachyos.sh FIRST to pin pstate;
     otherwise everything runs at ~10% GPU speed. On a weak CPU you can't afford that too.
   * fsync/esync are enabled to offload sync work from the slow CPU. If a game misbehaves,
     disable per-run: 'WINEFSYNC=0 WINEESYNC=0 wine9600 game.exe'.

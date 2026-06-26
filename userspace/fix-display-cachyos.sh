@@ -111,7 +111,7 @@ cat <<'EOF'
 After reboot you should land on the SDDM greeter. Log in to "Plasma (X11)".
 
 If it works:
-  * You're now on nouveau + X11. For performance, run optimize-nouveau-cachyos.sh
+  * You're now on nouveau + X11. For performance, run nouveau-attic/userspace/optimize-nouveau-cachyos.sh
     (pins GPU clocks) — but you can stay on X11 for stability.
   * To try Wayland later: at the SDDM session picker choose "Plasma (Wayland)".
 

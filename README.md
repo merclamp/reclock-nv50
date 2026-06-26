@@ -1,104 +1,71 @@
-# reclock-nv50 — стабилизация reclocking в nouveau для GeForce 9600 GT (G94 / NV50·Tesla)
+# reclock-nv50 — GeForce 9600 GT (G94 / NV50·Tesla) на современной CachyOS
 
-Рабочее пространство для **патчей к существующему nouveau**, а не нового драйвера.
-Основано на промпте `../nvidia_legacy_driver_prompt.md`.
+Заставляем старую **GeForce 9600 GT (G94)** работать на свежей CachyOS (ядро 7.x,
+clang/LTO). **Основной путь — проприетарный NVIDIA 340.108 через DKMS.** Попытка
+вытащить полные частоты через nouveau-reclocking оказалась тупиком и убрана в
+`nouveau-attic/` (справочно).
 
-**Миссия (по итогам разведки):** дисплей/KMS и OpenGL 3.3/GLES 3.0 уже работают upstream;
-единственный реальный пробел — power management. Цель проекта — довести **reclocking
-до стабильных полных частот** (`0f`: core 650 / shader 1625 / memory 900 МГц).
+Цель — одна конкретная машина: **mlamp**, i3-2120, 9600 GT (`10de:0622`), CachyOS,
+ядро `7.1.x-cachyos` (clang+ThinLTO). Значения захардкожены сознательно.
 
-## Состав проекта
-
-Проект — две половины одного решения для 9600 GT:
-
-- **Ядерная часть (этот корень):** `patches/`, `src/`, `scripts/build-nouveau.sh`,
-  `docs/00-07` — снимают гейт `allow_reclock=false` и собирают патченый `nouveau.ko`.
-- **Userspace-обвязка (`userspace/`):** установка, оптимизация (mesa +
-  пин pstate + Wayland), gaming (WineD3D, без DXVK), восстановление графики, и
-  контрольная панель `nv9600gt.py`. Подробности — `userspace/INTEGRATION.md`.
-
-Связанный пайплайн одной командой (build → dry-run → live → optimize, всё за явным
-согласием, с recovery-дисциплиной из `docs/05`):
+## Быстрый старт
 
 ```
-userspace/reclock-full.sh
+userspace/install-cachyos.sh      # ставит 340.108: utils (AUR) + патченый DKMS-модуль
+sudo reboot                       # выбрать сессию Plasma (X11)
 ```
 
-> На стоковом nouveau.ko reclock на NV50 отдаёт `-ENOSYS` — userspace-пин pstate даёт
-> реальный прирост (~10%→~80%) только поверх патченого модуля из этого репо.
-
-## Установка одной командой (`установить-всё.sh`)
-
-Поставить и **скомпилировать всё сразу, без вопросов** (nouveau-путь):
-
+После ребута:
 ```
-./установить-всё.sh
+nvidia-smi                          # драйвер 340.108
+lspci -k | grep -A3 -Ei 'vga|3d'    # Kernel driver in use: nvidia
 ```
 
-Один проход ставит системный тюнинг, открытый стек Mesa/nouveau + сервис пина
-максимального pstate, Wine/WineD3D, **компилирует и ставит yserver** и
-**компилирует** патченый `nouveau.ko` (если рядом есть исходники ядра —
-`src/linux*`/`src/nouveau`, либо через `NV_KSRC=/путь`). Пароль sudo спрашивается
-один раз; все подвопросы скриптов авто-отвечаются безопасным дефолтом.
+Переключение между драйверами в любой момент:
+```
+userspace/nv-switch.sh status       # что стоит/грузится сейчас
+userspace/nv-switch.sh nvidia       # на проприетарь 340.108 (блэклист nouveau)
+userspace/nv-switch.sh nouveau      # обратно на nouveau
+# затем sudo reboot
+```
 
-**Живой memory-reclock включён в `установить-всё.sh`** (граница снята явным разрешением). Он
-авто-определяет окружение:
-- из **TTY** (без GUI) — делает dry-run проверки гейта, затем пишет `0f` вживую
-  (в RAM; reboot откатывает). Это единственный способ: nouveau нельзя выгрузить,
-  пока графсессия держит GPU.
-- из **GUI** — пропускается с инструкцией перезапустить из TTY:
-  `LIVE_RECLOCK=1 ./установить-всё.sh` (или `RECLOCK_LIVE=1 userspace/reclock-full.sh`).
+## Почему вендор-пакет, а не AUR
 
-Управление: `LIVE_RECLOCK=0 ./установить-всё.sh` — пропустить запись в железо;
-`LIVE_RECLOCK=1` — форсировать даже в GUI (выгрузка nouveau, скорее всего, упадёт).
-Перед боевым reclock держи recovery (SSH со второй машины / Magic SysRq).
-Проприетарный 340 с этим путём несовместим — `установить-всё.sh` откажется стартовать, пока
-он установлен.
+- Голый AUR `nvidia-340xx-dkms` — это **протухший 340.76 (Linux 4.0)**, он НЕ собирается.
+- Живой `nvidia-340xx` (340.108-39) патчит только до ядра 6.15.
+- Поэтому драйвер вендорится в `proprietary-340xx/`: PKGBUILD + патчи `0001-0019` (AUR)
+  **+ наш `0020-kernel-7.0-7.1.patch`** под ядра 7.0/7.1 и clang/LTO. См.
+  `proprietary-340xx/README.md`.
 
-## ▶ Текущий статус (на момент паузы)
+`0020` чинит: conftest (`-fms-extensions` — иначе `static_assert` в `linux/fs.h` валит
+все пробы), `in_irq()`→`in_hardirq()`, удалённый глобал `screen_info` (conftest-фолбэк),
+и `dkms.conf` (сборка через `SYSSRC=` + авто-детект clang → `CC=clang LLVM=1`).
 
-**Сделано (всё безопасно, железо не менялось):**
-- Корень найден: reclocking административно выключен — `allow_reclock=false` в `nv50.c:562`;
-  `nvkm_clk_ustate_update` отдаёт `-ENOSYS`. VBIOS даёт ровно один pstate `0f`, вольтаж
-  уже на максимуме (1.15 В). Разбор: `docs/03`, `docs/04`.
-- Патч готов: `patches/0001-...patch` (`false→true`), сверен с rnndb (`docs/06`).
-- **Патченный `nouveau.ko` СОБРАН** (`build/nouveau-src/nouveau.ko`), vermagic совпал
-  с ядром (`7.0.11-1-cachyos`), MODVERSIONS off ⇒ загрузится. Сборка: `scripts/build-nouveau.sh`.
-- Второй фронт (TTM ENOMEM, мешает сейчас) локализован в исходнике: `docs/07`.
+**Проверено сборкой:** 7.0 gcc (7.0.13-zen) и 7.1 clang (7.1.0-cachyos), и
+**DKMS-установкой на саму mlamp** (7.1-rc6 clang): `dkms status … installed`.
 
-**Следующий шаг — ТРЕБУЕТ ТЕБЯ (уронит графсессию на этой карте):**
-безопасная сухая прогонка `NvMemExec=0` по плану `docs/05` §C — проверит, что гейт снят
-и `calc` считает частоты БЕЗ записи в память. Боевой memory-reclock — только после неё и
-с планом восстановления (`docs/05` §D/E). Ничего с железом без твоего «go» не делаю.
+## Жёсткие потолки железа (физика чипа, не баг)
 
-## Целевая система (измерено 2026-06-25, не по памяти)
+- Нет аппаратного Vulkan на Tesla → только OpenGL. DXVK/VKD3D/gamescope невозможны;
+  gaming — через WineD3D (OpenGL), DXVK выключен намеренно.
+- Проприетарный 340.108 — **только Xorg/X11**, без Wayland. Логиниться в Plasma (X11).
+- Secure Boot должен быть выключен (модуль без подписи) либо подписать через MOK.
 
-| Параметр | Значение | Источник |
-|---|---|---|
-| GPU | NVIDIA G94 [GeForce 9600 GT], PCI `10de:0622`, slot `0000:01:00.0` | `lspci`, sysfs uevent |
-| Семейство | NV50 / Tesla (nouveau-класс `nv50`, чип `NV94`) | renderer string `NV94` |
-| Ядро | `7.0.11-1-cachyos` (новее, чем 6.8+ из промпта) | `uname -r` |
-| Драйвер | `nouveau` загружен, стек `drm_gpuvm`+`gpu_sched`+`drm_exec`+`ttm` | `lsmod` |
-| Mesa | `26.1.2` | `pacman -Q mesa` |
-| Сессия | Wayland (wayland-0), Xwayland на :0 | env |
+## Структура
 
-## Главный вывод разведки
+| Путь | Что |
+|---|---|
+| `proprietary-340xx/` | вендор-пакет 340.108 DKMS (PKGBUILD + патчи 0001-0020) — **основное** |
+| `userspace/install-cachyos.sh` | установка проприетарного пути |
+| `userspace/nv-switch.sh` | переключатель nvidia ↔ nouveau (обе стороны) |
+| `userspace/optimize-system-cachyos.sh` | тюнинг слабого CPU/8ГБ |
+| `userspace/setup-gaming-9600gt.sh` | WineD3D-гейминг (DX9/DX10) |
+| `userspace/{diagnose,fix}-display-cachyos.sh` | диагностика/восстановление входа |
+| `userspace/nv9600gt.py` | контрольная панель (GUI/TUI) |
+| `nouveau-attic/` | **архив**: старый nouveau-reclocking (патчи, src, docs, traces, скрипты) |
 
-Цели промпта №1 (Wayland/KMS) и №2 (OpenGL 3.3 / GLES 3.0) **уже закрыты upstream**
-на этой машине. Vulkan отсутствует — как и предсказано (NV50 его не поддерживает).
-**Единственный реальный незакрытый фронт — reclocking (цель №4).**
+## Безопасность
 
-Подробности и доказательства: `docs/00-current-state.md`.
-Архитектура и точки приложения сил: `docs/01-architecture.md`.
-План по срезам: `docs/02-roadmap.md`.
-
-## Скрипты
-
-- `scripts/assess.sh` — read-only диагностика без root (воспроизводимо).
-- `scripts/assess-root.sh` — чтение `pstate`/`clk`/`dmesg` (нужен root).
-
-## Безопасность железа
-
-Reclocking-эксперименты могут **намертво подвесить GPU**. Любая запись в `pstate`
-или MMIO выполняется только: (а) с явного согласия, (б) при наличии способа удалённой
-перезагрузки (SSH/watchdog). По умолчанию делаем только чтение.
+- Переключение драйвера и сборка модуля безопасны. Боевой nouveau-reclocking (запись
+  pstate в железо) живёт только в `nouveau-attic/` и требует фразы-подтверждения.
+- Не коммить build-артефакты: `proprietary-340xx/{src,pkg,*.run,*.pkg.tar.*}` — в `.gitignore`.
